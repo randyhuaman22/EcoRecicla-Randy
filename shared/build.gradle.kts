@@ -25,6 +25,7 @@ kotlin {
             implementation(libs.koin.compose)
             implementation(libs.koin.compose.viewmodel)
             implementation(libs.kotlinx.coroutines.core)
+            implementation(libs.kotlinx.datetime)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.content.negotiation)
@@ -54,6 +55,10 @@ kotlin {
         }
         jvmTest.dependencies { implementation(libs.sqldelight.jvm) }
     }
+}
+
+configurations.configureEach {
+    resolutionStrategy.force("org.jetbrains.kotlinx:kotlinx-datetime:0.6.2")
 }
 
 sqldelight {
