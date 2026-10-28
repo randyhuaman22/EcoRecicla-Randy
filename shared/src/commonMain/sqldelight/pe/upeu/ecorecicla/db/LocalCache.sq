@@ -1,0 +1,159 @@
+CREATE TABLE ruta_cache (
+    usuario_key TEXT NOT NULL,
+    ruta_id INTEGER NOT NULL,
+    fecha TEXT NOT NULL,
+    estado TEXT NOT NULL,
+    PRIMARY KEY (usuario_key, ruta_id)
+);
+
+CREATE TABLE ruta_punto (
+    usuario_key TEXT NOT NULL,
+    ruta_id INTEGER NOT NULL,
+    punto_id INTEGER NOT NULL,
+    razon_social TEXT NOT NULL,
+    direccion TEXT NOT NULL,
+    zona TEXT NOT NULL,
+    material_habitual TEXT NOT NULL,
+    secuencia INTEGER NOT NULL,
+    atendido INTEGER NOT NULL,
+    motivo_omision TEXT,
+    PRIMARY KEY (usuario_key, ruta_id, punto_id)
+);
+
+CREATE TABLE punto_cache (
+    usuario_key TEXT NOT NULL,
+    punto_id INTEGER NOT NULL,
+    razon_social TEXT NOT NULL,
+    direccion TEXT NOT NULL,
+    zona TEXT NOT NULL,
+    material_habitual TEXT NOT NULL,
+    PRIMARY KEY (usuario_key, punto_id)
+);
+
+CREATE TABLE pesaje_local (
+    usuario_key TEXT NOT NULL,
+    id INTEGER NOT NULL,
+    ruta_id INTEGER NOT NULL,
+    punto_id INTEGER NOT NULL,
+    fecha_hora TEXT NOT NULL,
+    material TEXT NOT NULL,
+    peso_bruto REAL NOT NULL,
+    tara REAL NOT NULL,
+    peso_neto REAL NOT NULL,
+    observacion TEXT NOT NULL DEFAULT '',
+    operario TEXT NOT NULL,
+    estado TEXT NOT NULL,
+    motivo_anulacion TEXT,
+    pendiente INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (usuario_key, id)
+);
+
+CREATE INDEX pesaje_por_punto_fecha ON pesaje_local(usuario_key, punto_id, fecha_hora DESC);
+
+CREATE TABLE operacion_pendiente (
+    operacion_id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    usuario_key TEXT NOT NULL,
+    tipo TEXT NOT NULL,
+    entidad_id INTEGER,
+    ruta_id INTEGER NOT NULL,
+    punto_id INTEGER,
+    payload TEXT NOT NULL,
+    fecha_cambio TEXT NOT NULL,
+    codigo_error INTEGER,
+    mensaje_error TEXT,
+    errores_validacion TEXT,
+    UNIQUE(usuario_key, tipo, entidad_id)
+);
+
+CREATE TABLE sync_meta (
+    usuario_key TEXT NOT NULL,
+    clave TEXT NOT NULL,
+    valor TEXT NOT NULL,
+    PRIMARY KEY (usuario_key, clave)
+);
+
+observeRouteByDate:
+SELECT * FROM ruta_cache WHERE usuario_key = ? AND fecha = ? LIMIT 1;
+
+observeRoutePoints:
+SELECT * FROM ruta_punto WHERE usuario_key = ? AND ruta_id = ? ORDER BY secuencia ASC;
+
+insertRoute:
+INSERT OR REPLACE INTO ruta_cache(usuario_key, ruta_id, fecha, estado) VALUES (?, ?, ?, ?);
+
+deleteRoutePoints:
+DELETE FROM ruta_punto WHERE usuario_key = ? AND ruta_id = ?;
+
+insertRoutePoint:
+INSERT OR REPLACE INTO ruta_punto(usuario_key, ruta_id, punto_id, razon_social, direccion, zona, material_habitual, secuencia, atendido, motivo_omision)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+observePoints:
+SELECT punto_id, razon_social, direccion, zona, material_habitual
+FROM punto_cache
+WHERE usuario_key = ? AND (? = '' OR LOWER(zona) LIKE '%' || LOWER(?) || '%')
+ORDER BY razon_social ASC
+LIMIT ? OFFSET ?;
+
+upsertPoint:
+INSERT OR REPLACE INTO punto_cache(usuario_key, punto_id, razon_social, direccion, zona, material_habitual)
+VALUES (?, ?, ?, ?, ?, ?);
+
+countPoints:
+SELECT COUNT(*) FROM punto_cache WHERE usuario_key = ? AND (? = '' OR LOWER(zona) LIKE '%' || LOWER(?) || '%');
+
+observePesajes:
+SELECT * FROM pesaje_local WHERE usuario_key = ? AND punto_id = ? ORDER BY fecha_hora DESC, id DESC;
+
+insertPesaje:
+INSERT OR REPLACE INTO pesaje_local(usuario_key, id, ruta_id, punto_id, fecha_hora, material, peso_bruto, tara, peso_neto, observacion, operario, estado, motivo_anulacion, pendiente)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+updatePesaje:
+UPDATE pesaje_local SET ruta_id = ?, punto_id = ?, fecha_hora = ?, material = ?, peso_bruto = ?, tara = ?, peso_neto = ?, observacion = ?, operario = ?, estado = ?, motivo_anulacion = ?, pendiente = ?
+WHERE usuario_key = ? AND id = ?;
+
+deletePesaje:
+DELETE FROM pesaje_local WHERE usuario_key = ? AND id = ?;
+
+nextNegativePesajeId:
+SELECT COALESCE(MIN(id), 0) - 1 FROM pesaje_local WHERE usuario_key = ? AND id < 0;
+
+insertPending:
+INSERT OR REPLACE INTO operacion_pendiente(operacion_id, usuario_key, tipo, entidad_id, ruta_id, punto_id, payload, fecha_cambio, codigo_error, mensaje_error, errores_validacion)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+observePending:
+SELECT * FROM operacion_pendiente WHERE usuario_key = ? ORDER BY operacion_id ASC;
+
+findPendingCreate:
+SELECT * FROM operacion_pendiente WHERE usuario_key = ? AND tipo = 'CREAR_PESAJE' AND entidad_id = ? LIMIT 1;
+
+findPesajeById:
+SELECT * FROM pesaje_local WHERE usuario_key = ? AND id = ? LIMIT 1;
+
+nextOperationId:
+SELECT COALESCE(MAX(operacion_id), 0) + 1 FROM operacion_pendiente;
+
+updatePendingPayload:
+UPDATE operacion_pendiente SET payload = ?, fecha_cambio = ?, codigo_error = NULL, mensaje_error = NULL, errores_validacion = NULL
+WHERE operacion_id = ?;
+
+failPending:
+UPDATE operacion_pendiente SET codigo_error = ?, mensaje_error = ?, errores_validacion = ? WHERE operacion_id = ?;
+
+deletePending:
+DELETE FROM operacion_pendiente WHERE operacion_id = ?;
+
+updatePendingEntityId:
+UPDATE operacion_pendiente SET entidad_id = ? WHERE usuario_key = ? AND entidad_id = ?;
+
+countPending:
+SELECT COUNT(*) FROM operacion_pendiente WHERE usuario_key = ?;
+
+saveSyncTime:
+INSERT OR REPLACE INTO sync_meta(usuario_key, clave, valor) VALUES (?, 'ultima_sincronizacion', ?);
+
+readSyncTime:
+SELECT valor FROM sync_meta WHERE usuario_key = ? AND clave = 'ultima_sincronizacion' LIMIT 1;
+
