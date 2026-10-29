@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.datetime.toLocalDateTime
 import pe.upeu.ecorecicla.data.repository.Sincronizador
 import pe.upeu.ecorecicla.domain.model.*
 import pe.upeu.ecorecicla.domain.repository.RepositorioEco
@@ -33,6 +34,8 @@ data class EstadoAplicacion(
     val sincronizando: Boolean = false,
     val resumenSync: ResumenSincronizacion? = null,
     val erroresCampo: Map<String, String> = emptyMap(),
+    val operando: Boolean = false,
+    val confirmaciones: Int = 0,
 )
 
 class EcoViewModel(private val repo: RepositorioEco, private val sincronizador: Sincronizador) : ViewModel() {
@@ -88,7 +91,13 @@ class EcoViewModel(private val repo: RepositorioEco, private val sincronizador: 
         }
         when (val r = repo.cargarPuntos(sesion.usuario, zona, pagina, 20)) {
             is Resultado.Exito -> Unit
-            is Resultado.Fallo -> fallo(r.error)
+            is Resultado.Fallo -> {
+                val current = mutable.value
+                if (current.puntos !is UiState.Contenido) mutable.value = current.copy(
+                    puntos = UiState.Error(r.error.mensajeUI(), r.error.esReintentable())
+                )
+                else mutable.value = current.copy(mensaje = r.error.mensajeUI())
+            }
         }
         }
     }
@@ -105,7 +114,13 @@ class EcoViewModel(private val repo: RepositorioEco, private val sincronizador: 
         }
         when (val r = repo.cargarPesajes(usuario, punto.id, pagina, 20)) {
             is Resultado.Exito -> Unit
-            is Resultado.Fallo -> fallo(r.error)
+            is Resultado.Fallo -> {
+                val current = mutable.value
+                if (current.pesajes !is UiState.Contenido) mutable.value = current.copy(
+                    pesajes = UiState.Error(r.error.mensajeUI(), r.error.esReintentable())
+                )
+                else mutable.value = current.copy(mensaje = r.error.mensajeUI())
+            }
         }
         }
     }
@@ -116,9 +131,11 @@ class EcoViewModel(private val repo: RepositorioEco, private val sincronizador: 
         val ruta = (mutable.value.ruta as? UiState.Contenido)?.valor ?: return@launch
         val errores = validarPesaje(formulario)
         if (errores.isNotEmpty()) { mutable.value = mutable.value.copy(erroresCampo = errores); return@launch }
-        mutable.value = mutable.value.copy(erroresCampo = emptyMap())
+        if (mutable.value.operando) return@launch
+        mutable.value = mutable.value.copy(erroresCampo = emptyMap(), operando = true)
+        try {
         when (val r = repo.registrarPesaje(s.usuario, ruta.id, punto.id, formulario)) {
-            is Resultado.Exito -> { mutable.value = mutable.value.copy(mensaje = if (r.valor.pendiente) "Guardado en este dispositivo; pendiente de sincronización." else "Pesaje registrado."); elegirPunto(punto) }
+            is Resultado.Exito -> { mutable.value = mutable.value.copy(mensaje = if (r.valor.pendiente) "Guardado en este dispositivo; pendiente de sincronización." else "Pesaje registrado.", confirmaciones = mutable.value.confirmaciones + 1); elegirPunto(punto) }
             is Resultado.Fallo -> {
                 if (r.error is ErrorApi.Validacion) mutable.value = mutable.value.copy(erroresCampo = r.error.campos)
                 if (r.error is ErrorApi.NoEncontrado) {
@@ -127,13 +144,17 @@ class EcoViewModel(private val repo: RepositorioEco, private val sincronizador: 
                 } else fallo(r.error)
             }
         }
+        } finally { mutable.value = mutable.value.copy(operando = false) }
     }
     fun corregir(pesaje: Pesaje, formulario: PesajeFormulario) = viewModelScope.launch {
         val s = mutable.value.sesion ?: return@launch
         val errores = validarPesaje(formulario)
         if (errores.isNotEmpty()) { mutable.value = mutable.value.copy(erroresCampo = errores); return@launch }
+        if (mutable.value.operando) return@launch
+        mutable.value = mutable.value.copy(operando = true)
+        try {
         when (val r = repo.corregirPesaje(s.usuario, pesaje, formulario)) {
-            is Resultado.Exito -> { mutable.value = mutable.value.copy(mensaje = if (r.pendiente) "Corrección guardada en este dispositivo; pendiente de sincronización." else "Pesaje corregido."); puntoSeleccionado?.let { elegirPunto(it) } }
+            is Resultado.Exito -> { mutable.value = mutable.value.copy(mensaje = if (r.pendiente) "Corrección guardada en este dispositivo; pendiente de sincronización." else "Pesaje corregido.", confirmaciones = mutable.value.confirmaciones + 1); puntoSeleccionado?.let { elegirPunto(it) } }
             is Resultado.Fallo -> {
                 if (r.error is ErrorApi.Validacion) mutable.value = mutable.value.copy(erroresCampo = r.error.campos)
                 if (r.error is ErrorApi.NoEncontrado) {
@@ -142,11 +163,15 @@ class EcoViewModel(private val repo: RepositorioEco, private val sincronizador: 
                 } else fallo(r.error)
             }
         }
+        } finally { mutable.value = mutable.value.copy(operando = false) }
     }
     fun anular(pesaje: Pesaje, motivo: String) = viewModelScope.launch {
         val s = mutable.value.sesion ?: return@launch
+        if (mutable.value.operando) return@launch
+        mutable.value = mutable.value.copy(operando = true)
+        try {
         when (val r = repo.anularPesaje(s.usuario, pesaje, motivo)) {
-            is Resultado.Exito -> { mutable.value = mutable.value.copy(mensaje = if (r.pendiente) "Anulación guardada en este dispositivo; pendiente de sincronización." else "Pesaje anulado."); puntoSeleccionado?.let { elegirPunto(it) } }
+            is Resultado.Exito -> { mutable.value = mutable.value.copy(mensaje = if (r.pendiente) "Anulación guardada en este dispositivo; pendiente de sincronización." else "Pesaje anulado.", confirmaciones = mutable.value.confirmaciones + 1); puntoSeleccionado?.let { elegirPunto(it) } }
             is Resultado.Fallo -> {
                 if (r.error is ErrorApi.NoEncontrado) {
                     mutable.value = mutable.value.copy(mensaje = r.error.mensaje)
@@ -154,6 +179,7 @@ class EcoViewModel(private val repo: RepositorioEco, private val sincronizador: 
                 } else fallo(r.error)
             }
         }
+        } finally { mutable.value = mutable.value.copy(operando = false) }
     }
     fun omitir(punto: PuntoAcopio, motivo: String) = viewModelScope.launch {
         val s = mutable.value.sesion ?: return@launch
@@ -223,8 +249,12 @@ class EcoViewModel(private val repo: RepositorioEco, private val sincronizador: 
             )
         }
     }
-    private fun fechaHoy() = kotlinx.datetime.Clock.System.now().toString().take(10)
+    private fun fechaHoy() = kotlinx.datetime.Clock.System.now()
+        .toLocalDateTime(kotlinx.datetime.TimeZone.currentSystemDefault()).date.toString()
 }
+
+private fun ErrorApi.esReintentable() =
+    this is ErrorApi.Servidor || this is ErrorApi.TiempoAgotado || this == ErrorApi.SinConexion
 
 private fun ErrorApi.mensajeUI() = when (this) {
     is ErrorApi.Validacion -> mensaje

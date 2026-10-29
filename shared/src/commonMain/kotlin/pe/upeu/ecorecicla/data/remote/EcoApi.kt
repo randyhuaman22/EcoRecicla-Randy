@@ -2,6 +2,9 @@ package pe.upeu.ecorecicla.data.remote
 
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.plugins.auth.Auth
+import io.ktor.client.plugins.auth.providers.BearerAuthProvider
+import io.ktor.client.plugins.plugin
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
@@ -15,6 +18,12 @@ import pe.upeu.ecorecicla.domain.model.ErrorApi
 import pe.upeu.ecorecicla.domain.model.Resultado
 
 class EcoApi(private val cliente: HttpClient) {
+    fun recargarTokenDeSesion() {
+        cliente.plugin(Auth).providers
+            .filterIsInstance<BearerAuthProvider>()
+            .forEach(BearerAuthProvider::clearToken)
+    }
+
     suspend fun login(usuario: String, contrasena: String) = ejecutar<LoginResponseDto> {
         cliente.post("auth/login") { setBody(LoginRequestDto(usuario, contrasena)) }
     }

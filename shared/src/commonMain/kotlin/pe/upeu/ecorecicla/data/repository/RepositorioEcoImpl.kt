@@ -17,14 +17,25 @@ class RepositorioEcoImpl(
     private val json: Json = Json { ignoreUnknownKeys = true },
 ) : RepositorioEco {
     override suspend fun login(usuario: String, contrasena: String): Resultado<Sesion> = when (val r = api.login(usuario, contrasena)) {
-        is Resultado.Exito -> Resultado.Exito(r.valor.toDomain(Clock.System.now().epochSeconds + r.valor.expiraEnSegundos).also { sesionSegura.guardar(it) })
+        is Resultado.Exito -> {
+            val sesion = r.valor.toDomain(Clock.System.now().epochSeconds + r.valor.expiraEnSegundos)
+            sesionSegura.guardar(sesion)
+            api.recargarTokenDeSesion()
+            Resultado.Exito(sesion)
+        }
         is Resultado.Fallo -> r
     }
     override suspend fun usuarioActual(): Resultado<Sesion> {
         val sesion = sesionSegura.leer() ?: return Resultado.Fallo(ErrorApi.NoAutenticado("Inicia sesión para continuar."))
         return when (val r = api.actual()) {
             is Resultado.Exito -> Resultado.Exito(r.valor.toDomain(sesion.token, sesion.expiraEpochSeconds)).also { sesionSegura.guardar((it as Resultado.Exito).valor) }
-            is Resultado.Fallo -> { if (r.error is ErrorApi.NoAutenticado) sesionSegura.borrar(); r }
+            is Resultado.Fallo -> {
+                if (r.error is ErrorApi.NoAutenticado) {
+                    sesionSegura.borrar()
+                    api.recargarTokenDeSesion()
+                }
+                r
+            }
         }
     }
     override fun observarRuta(usuario: String, fecha: String) = local.observarRuta(usuario, fecha)
@@ -146,7 +157,10 @@ class RepositorioEcoImpl(
             is Resultado.Fallo -> if (r.error is ErrorApi.NoAutenticado) Resultado.Exito(null) else Resultado.Exito(sesion)
         }
     }
-    override suspend fun cerrarSesion() = sesionSegura.borrar()
+    override suspend fun cerrarSesion() {
+        sesionSegura.borrar()
+        api.recargarTokenDeSesion()
+    }
     override suspend fun hayPendientes(usuario: String) = local.cantidadPendiente(usuario)
 }
 
