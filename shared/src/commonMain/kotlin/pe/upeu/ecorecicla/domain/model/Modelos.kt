@@ -107,7 +107,7 @@ sealed interface ErrorApi {
 }
 
 sealed interface Resultado<out T> {
-    data class Exito<T>(val valor: T) : Resultado<T>
+    data class Exito<T>(val valor: T, val pendiente: Boolean = false) : Resultado<T>
     data class Fallo(val error: ErrorApi) : Resultado<Nothing>
 }
 

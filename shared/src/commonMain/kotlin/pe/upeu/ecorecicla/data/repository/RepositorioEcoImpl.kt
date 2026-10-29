@@ -53,7 +53,7 @@ class RepositorioEcoImpl(
         // Persist locally before the request so the UI can observe it immediately, even offline.
         val provisional = local.guardarPesajePendiente(usuario, rutaId, puntoId, formulario)
         val operacion = local.crearPendienteParaPesaje(usuario, provisional.id, TipoOperacion.CREAR_PESAJE, rutaId, puntoId, json.encodeToString(body))
-        return when (val r = api.registrar(rutaId, puntoId, body)) {
+        return when (val r = api.registrar(rutaId, puntoId, body, "EcoRecicla:$usuario:${operacion.id}")) {
             is Resultado.Exito -> {
                 val definitivo = r.valor.toDomain()
                 local.reemplazarIdLocal(usuario, provisional.id, definitivo)
@@ -61,46 +61,72 @@ class RepositorioEcoImpl(
                 Resultado.Exito(definitivo)
             }
             is Resultado.Fallo -> {
-                local.guardarError(operacion, r.error)
-                if (r.error == ErrorApi.SinConexion || r.error == ErrorApi.TiempoAgotado) Resultado.Exito(provisional) else r
+                if (r.error == ErrorApi.SinConexion || r.error == ErrorApi.TiempoAgotado) {
+                    local.guardarError(operacion, r.error)
+                    Resultado.Exito(provisional, pendiente = true)
+                } else {
+                    local.descartarPesajeProvisional(usuario, provisional.id, operacion.id)
+                    r
+                }
             }
         }
     }
     override suspend fun corregirPesaje(usuario: String, pesaje: Pesaje, formulario: PesajeFormulario): Resultado<Pesaje> {
         val body = PesajeRequestDto(formulario.pesoBruto, formulario.tara, formulario.material, formulario.observacion)
-        val cambiado = local.corregirLocal(usuario, pesaje, formulario)
-        val operacion = local.crearPendienteParaPesaje(usuario, pesaje.id, TipoOperacion.CORREGIR_PESAJE, pesaje.rutaId, pesaje.puntoId, json.encodeToString(body))
-        if (pesaje.id < 0) return Resultado.Exito(cambiado)
+        if (pesaje.id < 0) {
+            val cambiado = local.corregirLocal(usuario, pesaje, formulario)
+            local.crearPendienteParaPesaje(usuario, pesaje.id, TipoOperacion.CORREGIR_PESAJE, pesaje.rutaId, pesaje.puntoId, json.encodeToString(body))
+            return Resultado.Exito(cambiado, pendiente = true)
+        }
         return when (val r = api.corregir(pesaje.id, body)) {
-            is Resultado.Exito -> { val definitivo = r.valor.toDomain(); local.guardarPesajes(usuario, listOf(definitivo)); local.borrarOperacion(operacion.id); Resultado.Exito(definitivo) }
+            is Resultado.Exito -> { val definitivo = r.valor.toDomain(); local.guardarPesajes(usuario, listOf(definitivo)); Resultado.Exito(definitivo) }
             is Resultado.Fallo -> {
-                local.guardarError(operacion, r.error)
-                if (r.error == ErrorApi.SinConexion || r.error == ErrorApi.TiempoAgotado) Resultado.Exito(cambiado) else r
+                if (r.error == ErrorApi.SinConexion || r.error == ErrorApi.TiempoAgotado) {
+                    val cambiado = local.corregirLocal(usuario, pesaje, formulario)
+                    val operacion = local.crearPendienteParaPesaje(usuario, pesaje.id, TipoOperacion.CORREGIR_PESAJE, pesaje.rutaId, pesaje.puntoId, json.encodeToString(body))
+                    local.guardarError(operacion, r.error)
+                    Resultado.Exito(cambiado, pendiente = true)
+                } else r
             }
         }
     }
     override suspend fun anularPesaje(usuario: String, pesaje: Pesaje, motivo: String): Resultado<Unit> {
-        local.anularLocal(usuario, pesaje, motivo)
-        val operacion = local.crearPendienteParaPesaje(usuario, pesaje.id, TipoOperacion.ANULAR_PESAJE, pesaje.rutaId, pesaje.puntoId, json.encodeToString(MotivoRequestDto(motivo)))
-        if (pesaje.id < 0) return Resultado.Exito(Unit)
+        if (pesaje.id < 0) return Resultado.Fallo(ErrorApi.Conflicto("Sincroniza el pesaje antes de anularlo."))
         return when (val r = api.anular(pesaje.id, motivo)) {
-            is Resultado.Exito -> { local.guardarPesajes(usuario, listOf(r.valor.toDomain())); local.borrarOperacion(operacion.id); Resultado.Exito(Unit) }
-            is Resultado.Fallo -> { local.guardarError(operacion, r.error); if (r.error == ErrorApi.SinConexion || r.error == ErrorApi.TiempoAgotado) Resultado.Exito(Unit) else r }
+            is Resultado.Exito -> { local.guardarPesajes(usuario, listOf(r.valor.toDomain())); Resultado.Exito(Unit) }
+            is Resultado.Fallo -> {
+                if (r.error == ErrorApi.SinConexion || r.error == ErrorApi.TiempoAgotado) {
+                    local.anularLocal(usuario, pesaje, motivo)
+                    val operacion = local.crearPendienteParaPesaje(usuario, pesaje.id, TipoOperacion.ANULAR_PESAJE, pesaje.rutaId, pesaje.puntoId, json.encodeToString(MotivoRequestDto(motivo)))
+                    local.guardarError(operacion, r.error)
+                    Resultado.Exito(Unit, pendiente = true)
+                } else r
+            }
         }
     }
     override suspend fun omitirPunto(usuario: String, rutaId: Long, puntoId: Long, motivo: String): Resultado<Unit> {
-        val pending = local.encolar(OperacionPendiente(0, TipoOperacion.OMITIR_PUNTO, puntoId, rutaId, puntoId,
-            json.encodeToString(MotivoRequestDto(motivo)), Clock.System.now().toString(), usuario = usuario))
         return when (val r = api.omitir(rutaId, puntoId, motivo)) {
-            is Resultado.Exito -> { local.guardarRuta(usuario, r.valor.toDomain()); local.borrarOperacion(pending.id); Resultado.Exito(Unit) }
-            is Resultado.Fallo -> { local.guardarError(pending, r.error); if (r.error == ErrorApi.SinConexion || r.error == ErrorApi.TiempoAgotado) Resultado.Exito(Unit) else r }
+            is Resultado.Exito -> { local.guardarRuta(usuario, r.valor.toDomain()); Resultado.Exito(Unit) }
+            is Resultado.Fallo -> {
+                if (r.error == ErrorApi.SinConexion || r.error == ErrorApi.TiempoAgotado) {
+                    val pending = local.encolar(OperacionPendiente(0, TipoOperacion.OMITIR_PUNTO, puntoId, rutaId, puntoId,
+                        json.encodeToString(MotivoRequestDto(motivo)), Clock.System.now().toString(), usuario = usuario))
+                    local.guardarError(pending, r.error)
+                    Resultado.Exito(Unit, pendiente = true)
+                } else r
+            }
         }
     }
     override suspend fun cerrarRuta(usuario: String, rutaId: Long): Resultado<Unit> {
-        val pending = local.encolar(OperacionPendiente(0, TipoOperacion.CERRAR_RUTA, rutaId, rutaId, null, "{}", Clock.System.now().toString(), usuario = usuario))
         return when (val r = api.cerrarRuta(rutaId)) {
-            is Resultado.Exito -> { local.guardarRuta(usuario, r.valor.toDomain()); local.borrarOperacion(pending.id); Resultado.Exito(Unit) }
-            is Resultado.Fallo -> { local.guardarError(pending, r.error); if (r.error == ErrorApi.SinConexion || r.error == ErrorApi.TiempoAgotado) Resultado.Exito(Unit) else r }
+            is Resultado.Exito -> { local.guardarRuta(usuario, r.valor.toDomain()); Resultado.Exito(Unit) }
+            is Resultado.Fallo -> {
+                if (r.error == ErrorApi.SinConexion || r.error == ErrorApi.TiempoAgotado) {
+                    val pending = local.encolar(OperacionPendiente(0, TipoOperacion.CERRAR_RUTA, rutaId, rutaId, null, "{}", Clock.System.now().toString(), usuario = usuario))
+                    local.guardarError(pending, r.error)
+                    Resultado.Exito(Unit, pendiente = true)
+                } else r
+            }
         }
     }
     override suspend fun crearPunto(usuario: String, punto: PuntoCrear): Resultado<Long> = when (val r = api.crearPunto(PuntoCrearRequestDto(punto.razonSocial, punto.direccion, punto.zona, punto.materialHabitual))) {
@@ -134,7 +160,7 @@ class Sincronizador(
         val errores = mutableMapOf<Long, ErrorApi>()
         for (op in local.pendientes(usuario)) {
             val resultado: Resultado<*> = when (op.tipo) {
-                TipoOperacion.CREAR_PESAJE -> api.registrar(op.rutaId, op.puntoId!!, json.decodeFromString<PesajeRequestDto>(op.payload))
+                TipoOperacion.CREAR_PESAJE -> api.registrar(op.rutaId, op.puntoId!!, json.decodeFromString<PesajeRequestDto>(op.payload), "EcoRecicla:$usuario:${op.id}")
                 TipoOperacion.CORREGIR_PESAJE -> api.corregir(op.entidadId!!, json.decodeFromString<PesajeRequestDto>(op.payload))
                 TipoOperacion.ANULAR_PESAJE -> api.anular(op.entidadId!!, json.decodeFromString<MotivoRequestDto>(op.payload).motivo)
                 TipoOperacion.OMITIR_PUNTO -> api.omitir(op.rutaId, op.puntoId!!, json.decodeFromString<MotivoRequestDto>(op.payload).motivo)

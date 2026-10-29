@@ -53,7 +53,11 @@ fun EcoApp(vm: EcoViewModel) {
                 Scaffold(topBar = { TopAppBar(title = { Text("EcoRutas · ${session.usuario}") }) }) { padding ->
                     Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            val tabs = if (session.rol.equals("ADMINISTRADOR", true)) listOf("Ruta", "Puntos", "Administrar", "Perfil") else listOf("Ruta", "Puntos", "Perfil")
+                            val tabs = buildList {
+                                add("Ruta"); add("Puntos")
+                                if ("PUNTO_GESTIONAR" in session.privilegios) add("Administrar")
+                                add("Perfil")
+                            }
                             tabs.forEach { item -> TextButton(onClick = { pantalla = item; if (item == "Puntos") vm.cargarPuntos() }) { Text(item) } }
                             TextButton(onClick = { vm.sincronizar() }, enabled = !state.sincronizando) { Text(if (state.sincronizando) "Sync…" else "Sincronizar") }
                         }
@@ -98,7 +102,7 @@ fun EcoApp(vm: EcoViewModel) {
                                     Button(onClick = { vm.registrar(PesajeFormulario(brutoN!!, taraN!!, material, observacion)) }, enabled = valida) { Text("Registrar pesaje") }
                                 }
                                 pesajeActivo?.let { p ->
-                                    if (capacidades.puedeCorregirPesajes) Button(onClick = {
+                                    if (pe.upeu.ecorecicla.domain.usecase.puedeCorregirPesaje(session, p)) Button(onClick = {
                                         val b = bruto.toDoubleOrNull(); val t = tara.toDoubleOrNull()
                                         if (b != null && t != null) vm.corregir(p, PesajeFormulario(b, t, material.ifBlank { p.material }, observacion.ifBlank { p.observacion }))
                                     }) { Text("Corregir seleccionado") }

@@ -16,10 +16,10 @@ HTTP sin TLS está habilitado solo para el servidor de desarrollo local. Para ot
 
 Consume el contrato del backend bajo `/api/v1/`: login, usuario actual, ruta asignada, puntos paginados, pesajes paginados, registro/corrección/anulación, omisión/cierre de ruta y administración de puntos/rutas. `HttpClient` único, JSON tolerante, bearer central salvo login, timeout y logging de cabeceras con autorización saneada. Errores REST se convierten a tipos de dominio; errores 400 conservan errores por campo.
 
-La sesión se almacena en preferencias cifradas protegidas por Android Keystore. No se almacenan contraseñas. Las tablas SQLDelight y la cola se particionan por usuario. La pantalla principal observa la base local. OPERARIO registra pesajes; SUPERVISOR ve las acciones autorizadas por privilegio; ADMINISTRADOR crea puntos y rutas y no registra pesajes. El backend sigue siendo la autoridad de autorización.
+La sesión se almacena en preferencias cifradas protegidas por Android Keystore. No se almacenan contraseñas. Las tablas SQLDelight y la cola se particionan por usuario. La pantalla principal observa la base local. Las acciones se muestran según los privilegios devueltos por el servicio; la autorización definitiva siempre corresponde al backend.
 
 ## Modo offline
 
 Los registros offline reciben IDs negativos, se guardan como pendientes y se muestran desde SQLDelight. La sincronización intenta primero subir la cola y luego actualizar ruta, puntos y pesajes. Los fallos 400/403/409 quedan guardados con mensaje y validación. La conectividad recuperada inicia una sincronización; también está disponible el botón manual.
 
-El backend no ofrece clave idempotente para registrar pesajes. Si el servidor alcanza a crear un registro y se pierde la respuesta antes de que la app reciba el ID definitivo, un reintento puede duplicarlo; la app conserva la operación y no inventa una ruta alternativa.
+Cada alta pendiente envía una cabecera `Idempotency-Key` estable en los reintentos. Para evitar duplicados, el backend debe almacenar y respetar esa clave de forma atómica; mientras el backend no implemente ese contrato, la app por sí sola no puede garantizar que un reintento no duplique un pesaje.

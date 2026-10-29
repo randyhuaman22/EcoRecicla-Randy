@@ -119,7 +119,13 @@ class EcoViewModel(private val repo: RepositorioEco, private val sincronizador: 
         mutable.value = mutable.value.copy(erroresCampo = emptyMap())
         when (val r = repo.registrarPesaje(s.usuario, ruta.id, punto.id, formulario)) {
             is Resultado.Exito -> { mutable.value = mutable.value.copy(mensaje = if (r.valor.pendiente) "Guardado en este dispositivo; pendiente de sincronización." else "Pesaje registrado."); elegirPunto(punto) }
-            is Resultado.Fallo -> { if (r.error is ErrorApi.Validacion) mutable.value = mutable.value.copy(erroresCampo = r.error.campos); fallo(r.error) }
+            is Resultado.Fallo -> {
+                if (r.error is ErrorApi.Validacion) mutable.value = mutable.value.copy(erroresCampo = r.error.campos)
+                if (r.error is ErrorApi.NoEncontrado) {
+                    mutable.value = mutable.value.copy(mensaje = r.error.mensaje)
+                    puntoSeleccionado?.let { elegirPunto(it, mutable.value.paginaPesajes) }
+                } else fallo(r.error)
+            }
         }
     }
     fun corregir(pesaje: Pesaje, formulario: PesajeFormulario) = viewModelScope.launch {
@@ -127,22 +133,33 @@ class EcoViewModel(private val repo: RepositorioEco, private val sincronizador: 
         val errores = validarPesaje(formulario)
         if (errores.isNotEmpty()) { mutable.value = mutable.value.copy(erroresCampo = errores); return@launch }
         when (val r = repo.corregirPesaje(s.usuario, pesaje, formulario)) {
-            is Resultado.Exito -> { mutable.value = mutable.value.copy(mensaje = "Pesaje corregido."); puntoSeleccionado?.let { elegirPunto(it) } }
-            is Resultado.Fallo -> { if (r.error is ErrorApi.Validacion) mutable.value = mutable.value.copy(erroresCampo = r.error.campos); fallo(r.error) }
+            is Resultado.Exito -> { mutable.value = mutable.value.copy(mensaje = if (r.pendiente) "Corrección guardada en este dispositivo; pendiente de sincronización." else "Pesaje corregido."); puntoSeleccionado?.let { elegirPunto(it) } }
+            is Resultado.Fallo -> {
+                if (r.error is ErrorApi.Validacion) mutable.value = mutable.value.copy(erroresCampo = r.error.campos)
+                if (r.error is ErrorApi.NoEncontrado) {
+                    mutable.value = mutable.value.copy(mensaje = r.error.mensaje)
+                    puntoSeleccionado?.let { elegirPunto(it, mutable.value.paginaPesajes) }
+                } else fallo(r.error)
+            }
         }
     }
     fun anular(pesaje: Pesaje, motivo: String) = viewModelScope.launch {
         val s = mutable.value.sesion ?: return@launch
         when (val r = repo.anularPesaje(s.usuario, pesaje, motivo)) {
-            is Resultado.Exito -> { mutable.value = mutable.value.copy(mensaje = "Pesaje anulado."); puntoSeleccionado?.let { elegirPunto(it) } }
-            is Resultado.Fallo -> fallo(r.error)
+            is Resultado.Exito -> { mutable.value = mutable.value.copy(mensaje = if (r.pendiente) "Anulación guardada en este dispositivo; pendiente de sincronización." else "Pesaje anulado."); puntoSeleccionado?.let { elegirPunto(it) } }
+            is Resultado.Fallo -> {
+                if (r.error is ErrorApi.NoEncontrado) {
+                    mutable.value = mutable.value.copy(mensaje = r.error.mensaje)
+                    puntoSeleccionado?.let { elegirPunto(it, mutable.value.paginaPesajes) }
+                } else fallo(r.error)
+            }
         }
     }
     fun omitir(punto: PuntoAcopio, motivo: String) = viewModelScope.launch {
         val s = mutable.value.sesion ?: return@launch
         val ruta = (mutable.value.ruta as? UiState.Contenido)?.valor ?: return@launch
         when (val r = repo.omitirPunto(s.usuario, ruta.id, punto.id, motivo)) {
-            is Resultado.Exito -> { mutable.value = mutable.value.copy(mensaje = "Omisión registrada."); refrescarRuta() }
+            is Resultado.Exito -> { mutable.value = mutable.value.copy(mensaje = if (r.pendiente) "Omisión guardada; pendiente de sincronización." else "Omisión registrada."); if (!r.pendiente) refrescarRuta() }
             is Resultado.Fallo -> fallo(r.error)
         }
     }
@@ -151,7 +168,7 @@ class EcoViewModel(private val repo: RepositorioEco, private val sincronizador: 
         val s = mutable.value.sesion ?: return@launch
         val ruta = (mutable.value.ruta as? UiState.Contenido)?.valor ?: return@launch
         when (val r = repo.cerrarRuta(s.usuario, ruta.id)) {
-            is Resultado.Exito -> { mutable.value = mutable.value.copy(mensaje = "Ruta cerrada."); refrescarRuta() }
+            is Resultado.Exito -> { mutable.value = mutable.value.copy(mensaje = if (r.pendiente) "Cierre solicitado; pendiente de confirmación del servidor." else "Ruta cerrada."); if (!r.pendiente) refrescarRuta() }
             is Resultado.Fallo -> fallo(r.error)
         }
     }

@@ -42,14 +42,32 @@ class EcoAppCommonTest {
     }
 
     @Test fun capacidadesRespetanRolYPrivilegios() {
-        val operario = capacidades(Sesion("t", "op", "OPERARIO", setOf("RUTA_CERRAR", "PESAJE_ANULAR")))
+        val operarioSinPrivilegios = capacidades(Sesion("t", "op", "OPERARIO", emptySet()))
+        assertFalse(operarioSinPrivilegios.puedeRegistrarPesajes)
+        assertFalse(operarioSinPrivilegios.puedeAnularPesajes)
+        assertFalse(operarioSinPrivilegios.puedeCerrarRuta)
+        val operario = capacidades(Sesion("t", "op", "OPERARIO", setOf("PESAJE_CREAR", "PESAJE_EDITAR")))
         assertTrue(operario.puedeRegistrarPesajes)
-        assertFalse(operario.puedeAnularPesajes)
-        assertFalse(operario.puedeCerrarRuta)
-        assertTrue(operario.puedeOmitirPunto)
-        val admin = capacidades(Sesion("t", "admin", "ADMINISTRADOR", setOf("PESAJE_REGISTRAR")))
+        assertTrue(operario.puedeCorregirPesajes)
+        assertFalse(operario.puedeAdministrar)
+        assertFalse(operario.puedeOmitirPunto)
+        val admin = capacidades(Sesion("t", "admin", "ADMINISTRADOR", setOf("PUNTO_GESTIONAR")))
         assertTrue(admin.puedeAdministrar)
         assertFalse(admin.puedeRegistrarPesajes)
+        val supervisor = capacidades(Sesion("t", "super", "SUPERVISOR", setOf("PESAJE_ANULAR", "RUTA_CERRAR")))
+        assertTrue(supervisor.puedeAnularPesajes)
+        assertTrue(supervisor.puedeCerrarRuta)
+        assertTrue(supervisor.puedeOmitirPunto)
+    }
+
+    @Test fun correccionSeDecidePorPrivilegiosYAutorDelPesaje() {
+        val own = Pesaje(1, 7, "2026-10-28T00:00:00Z", "Cartón", 10.0, 1.0, 9.0, "op", EstadoPesaje.Registrado, false)
+        val foreign = own.copy(id = 2, operario = "otro")
+        val operator = Sesion("t", "op", "OPERARIO", setOf("PESAJE_EDITAR"))
+        assertTrue(pe.upeu.ecorecicla.domain.usecase.puedeCorregirPesaje(operator, own))
+        assertFalse(pe.upeu.ecorecicla.domain.usecase.puedeCorregirPesaje(operator, foreign))
+        val supervisor = operator.copy(rol = "SUPERVISOR", privilegios = setOf("PESAJE_EDITAR", "PESAJE_EDITAR_TODOS"))
+        assertTrue(pe.upeu.ecorecicla.domain.usecase.puedeCorregirPesaje(supervisor, foreign))
     }
 
     @Test fun sinRedGuardaPesajeComoOperacionPendienteConIdLocal() = runBlocking {
@@ -62,8 +80,21 @@ class EcoAppCommonTest {
         result as Resultado.Exito<Pesaje>
         assertEquals(-1L, result.valor.id)
         assertTrue(result.valor.pendiente)
+        assertTrue(result.pendiente)
         assertEquals(TipoOperacion.CREAR_PESAJE, local.queue.single().tipo)
         assertEquals("operador-a", local.queue.single().usuario)
+        client.close()
+    }
+
+    @Test fun registrarEnvíaLaMismaClaveDeIdempotenciaRecibida() = runBlocking {
+        var clave: String? = null
+        val engine = MockEngine { request ->
+            clave = request.headers["Idempotency-Key"]
+            respond("{}", HttpStatusCode.Created, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        val client = testClient(engine)
+        runCatching { EcoApi(client).registrar(4, 7, PesajeRequestDto(20.0, 2.0, "Cartón", ""), "EcoRecicla:op:1") }
+        assertEquals("EcoRecicla:op:1", clave)
         client.close()
     }
 
@@ -120,6 +151,7 @@ private class FakeLocal : BaseLocal {
     override suspend fun pendientes(usuario: String) = queue.filter { it.usuario == usuario }
     override suspend fun guardarError(operacion: OperacionPendiente, error: ErrorApi) {}
     override suspend fun borrarOperacion(operacionId: Long) { queue.removeAll { it.id == operacionId } }
+    override suspend fun descartarPesajeProvisional(usuario: String, pesajeId: Long, operacionId: Long) { borrarOperacion(operacionId) }
     override suspend fun reemplazarIdLocal(usuario: String, temporalId: Long, pesaje: Pesaje) {}
     override suspend fun guardarUltimaSincronizacion(usuario: String, fecha: String) {}
     override suspend fun ultimaSincronizacion(usuario: String) = kotlinx.coroutines.flow.flowOf<String?>(null)

@@ -3,6 +3,7 @@ package pe.upeu.ecorecicla.data.remote
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.put
@@ -30,8 +31,11 @@ class EcoApi(private val cliente: HttpClient) {
     suspend fun pesajes(puntoId: Long, pagina: Int, tamanio: Int) = ejecutar<PaginaDto<PesajeDto>> {
         cliente.get("puntos/$puntoId/pesajes") { parameter("pagina", pagina); parameter("tamanio", tamanio) }
     }
-    suspend fun registrar(rutaId: Long, puntoId: Long, body: PesajeRequestDto) = ejecutar<PesajeDto> {
-        cliente.post("rutas/$rutaId/puntos/$puntoId/pesajes") { setBody(body) }
+    suspend fun registrar(rutaId: Long, puntoId: Long, body: PesajeRequestDto, claveIdempotencia: String? = null) = ejecutar<PesajeDto> {
+        cliente.post("rutas/$rutaId/puntos/$puntoId/pesajes") {
+            claveIdempotencia?.let { header("Idempotency-Key", it) }
+            setBody(body)
+        }
     }
     suspend fun corregir(id: Long, body: PesajeRequestDto) = ejecutar<PesajeDto> {
         cliente.put("pesajes/$id") { setBody(body) }

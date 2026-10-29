@@ -33,6 +33,7 @@ interface BaseLocal {
     suspend fun pendientes(usuario: String): List<OperacionPendiente>
     suspend fun guardarError(operacion: OperacionPendiente, error: ErrorApi)
     suspend fun borrarOperacion(operacionId: Long)
+    suspend fun descartarPesajeProvisional(usuario: String, pesajeId: Long, operacionId: Long)
     suspend fun reemplazarIdLocal(usuario: String, temporalId: Long, pesaje: Pesaje)
     suspend fun guardarUltimaSincronizacion(usuario: String, fecha: String)
     suspend fun ultimaSincronizacion(usuario: String): Flow<String?>
@@ -158,6 +159,13 @@ class BaseLocalSqlDelight(
     }
 
     override suspend fun borrarOperacion(operacionId: Long) { q.deletePending(operacionId) }
+
+    override suspend fun descartarPesajeProvisional(usuario: String, pesajeId: Long, operacionId: Long) {
+        database.transaction {
+            q.deletePending(operacionId)
+            q.deletePesaje(usuario, pesajeId)
+        }
+    }
 
     override suspend fun reemplazarIdLocal(usuario: String, temporalId: Long, pesaje: Pesaje) {
         database.transaction {

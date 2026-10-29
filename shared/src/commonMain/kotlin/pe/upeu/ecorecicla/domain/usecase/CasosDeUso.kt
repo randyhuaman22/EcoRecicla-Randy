@@ -14,17 +14,20 @@ data class CapacidadesUsuario(
 )
 
 fun capacidades(sesion: Sesion): CapacidadesUsuario {
-    val rol = sesion.rol.uppercase()
     val permisos = sesion.privilegios
     return CapacidadesUsuario(
-        puedeRegistrarPesajes = rol != "ADMINISTRADOR" && (rol == "OPERARIO" || "PESAJE_REGISTRAR" in permisos),
-        puedeCorregirPesajes = rol == "SUPERVISOR" && "PESAJE_CORREGIR" in permisos,
-        puedeAnularPesajes = rol == "SUPERVISOR" && "PESAJE_ANULAR" in permisos,
-        puedeCerrarRuta = rol == "SUPERVISOR" && "RUTA_CERRAR" in permisos,
+        puedeRegistrarPesajes = "PESAJE_CREAR" in permisos,
+        puedeCorregirPesajes = "PESAJE_EDITAR" in permisos,
+        puedeAnularPesajes = "PESAJE_ANULAR" in permisos,
+        puedeCerrarRuta = "RUTA_CERRAR" in permisos,
         puedeOmitirPunto = "RUTA_CERRAR" in permisos,
-        puedeAdministrar = rol == "ADMINISTRADOR",
+        puedeAdministrar = "PUNTO_GESTIONAR" in permisos,
     )
 }
+
+fun puedeCorregirPesaje(sesion: Sesion, pesaje: Pesaje): Boolean =
+    "PESAJE_EDITAR" in sesion.privilegios &&
+        (pesaje.operario == sesion.usuario || "PESAJE_EDITAR_TODOS" in sesion.privilegios)
 
 fun validarPesaje(formulario: PesajeFormulario): Map<String, String> = buildMap {
     if (formulario.pesoBruto <= 0) put("pesoBruto", "El peso bruto debe ser mayor que cero.")
